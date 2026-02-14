@@ -1,0 +1,100 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Settings {
+  id                  String   @id @default(cuid())
+  mockMode            Boolean  @default(true)
+  jiraBaseUrl         String   @default("")
+  jiraEmail           String   @default("")
+  jiraApiToken        String   @default("")
+  jiraProjectKeys     String   @default("")
+  jiraJql             String   @default("")
+  slackBotToken       String   @default("")
+  slackSigningSecret  String   @default("")
+  slackAppToken       String   @default("")
+  slackDefaultChannel String   @default("")
+  llmProvider         String   @default("openai")
+  llmApiKey           String   @default("")
+  llmModel            String   @default("gpt-4o-mini")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @default(now()) @updatedAt
+}
+
+model UserMapping {
+  id               String   @id @default(cuid())
+  jiraEmail        String   @unique
+  slackUserId      String
+  slackDisplayName String   @default("")
+  createdAt        DateTime @default(now())
+}
+
+model DorRuleset {
+  id         String    @id @default(cuid())
+  projectKey String
+  version    Int
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  rules      DorRule[]
+}
+
+model DorRule {
+  id              String     @id @default(cuid())
+  rulesetId       String
+  name            String
+  description     String
+  enabled         Boolean    @default(true)
+  severity        String     @default("warn")
+  weight          Float      @default(1.0)
+  detectionMethod String     @default("field_presence")
+  targetField     String     @default("")
+  expectedPattern String     @default("")
+  minLength       Int?
+  createdAt       DateTime   @default(now())
+  ruleset         DorRuleset @relation(fields: [rulesetId], references: [id], onDelete: Cascade)
+}
+
+model ScannedIssue {
+  id                  String      @id @default(cuid())
+  jiraKey             String      @unique
+  summary             String
+  description         String      @default("")
+  assignee            String      @default("")
+  readinessScore      Float       @default(0)
+  status              String      @default("NEEDS_INFO")
+  missingItems        String      @default("[]")
+  questionsGenerated  Boolean     @default(false)
+  slackMessageSent    Boolean     @default(false)
+  manualOverride      Boolean     @default(false)
+  overrideReason      String      @default("")
+  scannedAt           DateTime    @default(now())
+  updatedAt           DateTime    @default(now()) @updatedAt
+  answers             QaAnswer[]
+}
+
+model QaAnswer {
+  id         String        @id @default(cuid())
+  issueId    String
+  question   String
+  answer     String
+  answeredAt DateTime      @default(now())
+  issue      ScannedIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String
+  entityId   String
+  userId     String   @default("system")
+  changes    String   @default("{}")
+  createdAt  DateTime @default(now())
+}
