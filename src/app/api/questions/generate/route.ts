@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/db';
+import { generateQuestionsViaLLM } from '@/lib/llm';
 
 // Mock LLM question generation for demo mode
 function generateMockQuestions(
@@ -100,7 +101,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ questions: [], message: 'No missing items to generate questions for' });
     }
 
-    const questions = generateMockQuestions(issue, missingItems);
+    // Determine whether to use real LLM or mock templates
+    const settings = await prisma.settings.findUnique({
+      where: { id: 'singleton' },
+    });
+
+    let questions: { missingRule: string; question: string }[];
+
+    if (settings && !settings.mockMode && settings.llmApiKey) {
+      // Real mode: try LLM generation first
+      const llmQuestions = await generateQuestionsViaLLM(
+        settings,
+        { jiraKey: issue.jiraKey, summary: issue.summary, description: issue.description },
+        missingItems,
+      );
+
+      if (llmQuestions && llmQuestions.length > 0) {
+        questions = llmQuestions;
+      } else {
+        // Fallback to template-based generation
+        console.warn('LLM generation returned no results, falling back to templates');
+        questions = generateMockQuestions(issue, missingItems);
+      }
+    } else {
+      // Mock mode or no LLM configured: use template-based generation
+      questions = generateMockQuestions(issue, missingItems);
+    }
 
     // Persist questions as QaAnswer records with empty answers
     const savedQuestions = [];

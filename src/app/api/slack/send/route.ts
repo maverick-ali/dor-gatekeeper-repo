@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/db';
+import {
+  createSlackClient,
+  sendQuestionMessage,
+  lookupUserByEmail,
+} from '@/lib/slack';
 
 // Mock answers simulating Slack user responses
 const MOCK_ANSWERS: Record<string, string> = {
@@ -46,17 +51,19 @@ export async function POST(request: Request) {
 
     // Get user mapping for the assignee
     let slackUser = 'Unknown User';
+    let slackUserId = '';
     if (issue.assignee) {
       const mapping = await prisma.userMapping.findUnique({
         where: { jiraEmail: issue.assignee },
       });
       if (mapping) {
         slackUser = mapping.slackDisplayName || mapping.slackUserId;
+        slackUserId = mapping.slackUserId;
       }
     }
 
     if (settings.mockMode) {
-      // Set status to WAITING_ON_SLACK
+      // ── Mock Mode ──────────────────────────────────────────────
       await prisma.scannedIssue.update({
         where: { id: issueId },
         data: {
@@ -66,11 +73,10 @@ export async function POST(request: Request) {
         },
       });
 
-      // Auto-generate mock answers for unanswered questions after a simulated delay
+      // Auto-generate mock answers for unanswered questions
       const unansweredQuestions = issue.answers.filter(a => !a.answer || a.answer.trim() === '');
 
       for (const qa of unansweredQuestions) {
-        // Extract the missing rule from the question text "[RuleName] Question?"
         const ruleMatch = qa.question.match(/^\[(.+?)\]/);
         const ruleName = ruleMatch ? ruleMatch[1] : '';
         const mockAnswer = MOCK_ANSWERS[ruleName] || 'Acknowledged — will address this before sprint planning.';
@@ -102,8 +108,103 @@ export async function POST(request: Request) {
       });
     }
 
-    // Real mode: send actual Slack message (TODO: implement with Bolt.js)
-    return NextResponse.json({ message: 'Slack message sent successfully' });
+    // ── Real Mode: Send actual Slack message ──────────────────────
+
+    if (!settings.slackBotToken) {
+      return NextResponse.json({ error: 'Slack bot token not configured' }, { status: 400 });
+    }
+
+    const client = createSlackClient(settings.slackBotToken);
+
+    // Determine the target channel:
+    // 1. Try DM to the mapped Slack user
+    // 2. If no mapping, try Slack user lookup by email
+    // 3. Fall back to default channel
+    let targetChannel = settings.slackDefaultChannel || '';
+
+    if (slackUserId) {
+      targetChannel = slackUserId; // DM to user by Slack user ID
+    } else if (issue.assignee) {
+      // Try auto-lookup by email
+      const lookedUpId = await lookupUserByEmail(client, issue.assignee);
+      if (lookedUpId) {
+        targetChannel = lookedUpId;
+        slackUserId = lookedUpId;
+        // Optionally save the mapping for future use
+        await prisma.userMapping.upsert({
+          where: { jiraEmail: issue.assignee },
+          update: { slackUserId: lookedUpId },
+          create: {
+            jiraEmail: issue.assignee,
+            slackUserId: lookedUpId,
+            slackDisplayName: issue.assignee,
+          },
+        });
+      }
+    }
+
+    if (!targetChannel) {
+      return NextResponse.json({
+        error: 'No Slack channel or user found. Configure a default channel or user mapping.',
+      }, { status: 400 });
+    }
+
+    // Get unanswered questions to include in the message
+    const unansweredQuestions = issue.answers
+      .filter(a => !a.answer || a.answer.trim() === '')
+      .map(q => ({ id: q.id, question: q.question }));
+
+    if (unansweredQuestions.length === 0) {
+      return NextResponse.json({
+        message: 'No unanswered questions to send.',
+      });
+    }
+
+    // Send Block Kit message
+    await sendQuestionMessage(
+      client,
+      targetChannel,
+      {
+        jiraKey: issue.jiraKey,
+        summary: issue.summary,
+        readinessScore: issue.readinessScore,
+        status: issue.status,
+        id: issue.id,
+      },
+      unansweredQuestions,
+      settings.jiraBaseUrl,
+    );
+
+    // Update issue status
+    await prisma.scannedIssue.update({
+      where: { id: issueId },
+      data: {
+        slackMessageSent: true,
+        status: 'WAITING_ON_SLACK',
+        updatedAt: new Date(),
+      },
+    });
+
+    // Audit log
+    await prisma.auditLog.create({
+      data: {
+        action: 'SLACK_MESSAGE_SENT',
+        entityType: 'ScannedIssue',
+        entityId: issueId,
+        userId: 'system',
+        changes: JSON.stringify({
+          mockMode: false,
+          slackUser: slackUserId || targetChannel,
+          questionsCount: unansweredQuestions.length,
+        }),
+      },
+    });
+
+    return NextResponse.json({
+      message: `Slack message sent to ${slackUser || targetChannel}`,
+      slackUser: slackUserId || targetChannel,
+      questionsCount: unansweredQuestions.length,
+    });
   } catch (error) {
     console.error('Error sending Slack message:', error);
     return NextResponse.json({ error: 'Failed to send Slack message' }, { status: 500 });

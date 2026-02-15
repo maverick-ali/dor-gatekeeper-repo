@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/db';
 import { calculateReadinessScore } from '@/lib/rules-engine';
+import { createJiraClient, buildDorComment } from '@/lib/jira';
+import type { NormalizedIssue } from '@/lib/jira';
 
 // Mock Jira issues for demo mode — 5 issues with varying completeness
-const MOCK_ISSUES = [
+const MOCK_ISSUES: NormalizedIssue[] = [
   {
     key: 'DEMO-101',
     summary: 'Implement user authentication system',
@@ -90,8 +92,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Settings not configured. Please load demo data first.' }, { status: 400 });
     }
 
-    // Get active ruleset
-    const ruleset = await prisma.dorRuleset.findFirst({
+    // Get active ruleset (with threshold fields for dynamic status computation)
+    // Try exact project key first, then fall back to any active ruleset
+    let ruleset = await prisma.dorRuleset.findFirst({
       where: {
         projectKey: projectKey || settings.jiraProjectKeys,
         isActive: true,
@@ -100,8 +103,22 @@ export async function POST(request: Request) {
     });
 
     if (!ruleset) {
+      // Fallback: use any active ruleset (e.g., DEMO ruleset works for any project)
+      ruleset = await prisma.dorRuleset.findFirst({
+        where: { isActive: true },
+        include: { rules: true },
+      });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rulesetAny = ruleset as any;
+
+    if (!ruleset) {
       return NextResponse.json({ error: 'No active ruleset found. Please load demo data first.' }, { status: 404 });
     }
+
+    const tReady = rulesetAny.thresholdReady ?? 4;
+    const tClarification = rulesetAny.thresholdClarification ?? 2.5;
 
     // If issueId is provided, re-scan a single issue
     if (issueId) {
@@ -113,21 +130,33 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Issue not found' }, { status: 404 });
       }
 
-      // Find the matching mock issue to get original data
-      const mockIssue = MOCK_ISSUES.find(m => m.key === existingIssue.jiraKey);
-      if (!mockIssue && settings.mockMode) {
-        return NextResponse.json({ error: 'Mock issue not found' }, { status: 404 });
+      // Get fresh issue data
+      let issueData: NormalizedIssue;
+      if (settings.mockMode) {
+        const mockIssue = MOCK_ISSUES.find(m => m.key === existingIssue.jiraKey);
+        if (!mockIssue) {
+          return NextResponse.json({ error: 'Mock issue not found' }, { status: 404 });
+        }
+        issueData = mockIssue;
+      } else {
+        // Real mode: fetch fresh data from JIRA
+        try {
+          const jiraClient = createJiraClient(settings);
+          issueData = await jiraClient.getIssue(existingIssue.jiraKey);
+        } catch (jiraError) {
+          console.error('JIRA fetch failed during re-scan:', jiraError);
+          // Fall back to stored data
+          issueData = {
+            key: existingIssue.jiraKey,
+            summary: existingIssue.summary,
+            description: existingIssue.description,
+            assignee: existingIssue.assignee,
+            priority: null,
+            labels: [],
+            customfield_10016: null,
+          };
+        }
       }
-
-      const issueData = mockIssue || {
-        key: existingIssue.jiraKey,
-        summary: existingIssue.summary,
-        description: existingIssue.description,
-        assignee: existingIssue.assignee,
-        priority: null,
-        labels: [],
-        customfield_10016: null,
-      };
 
       // Compute missing items, but treat answered questions as satisfied
       const answeredRules = existingIssue.answers
@@ -137,7 +166,7 @@ export async function POST(request: Request) {
       const { score, missing } = scoreIssue(issueData, ruleset.rules, answeredRules);
       const status = existingIssue.manualOverride
         ? existingIssue.status
-        : score >= 4 ? 'READY' : score >= 2.5 ? 'NEEDS_CLARIFICATION' : 'NEEDS_INFO';
+        : score >= tReady ? 'READY' : score >= tClarification ? 'NEEDS_CLARIFICATION' : 'NEEDS_INFO';
 
       const updated = await prisma.scannedIssue.update({
         where: { id: issueId },
@@ -150,16 +179,42 @@ export async function POST(request: Request) {
         },
       });
 
+      // JIRA writeback on re-scan (non-mock only)
+      if (!settings.mockMode) {
+        try {
+          const jiraClient = createJiraClient(settings);
+          // Update labels
+          if (status === 'READY') {
+            await jiraClient.updateLabels(existingIssue.jiraKey, ['DOR_READY'], ['DOR_NEEDS_INFO']);
+          } else {
+            await jiraClient.updateLabels(existingIssue.jiraKey, ['DOR_NEEDS_INFO'], ['DOR_READY']);
+          }
+        } catch (writebackError) {
+          console.error('JIRA writeback failed on re-scan:', writebackError);
+        }
+      }
+
       return NextResponse.json({ message: 'Re-scan completed', issue: updated });
     }
 
-    // Full scan of all issues
-    const issues = settings.mockMode ? MOCK_ISSUES : [];
+    // ── Full scan of all issues ──────────────────────────────────
+    let issues: NormalizedIssue[];
+
+    if (settings.mockMode) {
+      issues = MOCK_ISSUES;
+    } else {
+      // Real mode: fetch issues from JIRA
+      const jiraClient = createJiraClient(settings);
+      const jql = settings.jiraJql
+        || `project = ${projectKey || settings.jiraProjectKeys} AND statusCategory != Done ORDER BY priority DESC, updated DESC`;
+      issues = await jiraClient.searchIssues(jql);
+    }
+
     const scannedIssues = [];
 
     for (const issue of issues) {
       const { score, missing } = scoreIssue(issue, ruleset.rules, []);
-      const status = score >= 4 ? 'READY' : score >= 2.5 ? 'NEEDS_CLARIFICATION' : 'NEEDS_INFO';
+      const status = score >= tReady ? 'READY' : score >= tClarification ? 'NEEDS_CLARIFICATION' : 'NEEDS_INFO';
 
       const scannedIssue = await prisma.scannedIssue.upsert({
         where: { jiraKey: issue.key },
@@ -185,6 +240,27 @@ export async function POST(request: Request) {
       });
 
       scannedIssues.push(scannedIssue);
+
+      // JIRA writeback: labels + comment (non-mock only)
+      if (!settings.mockMode) {
+        try {
+          const jiraClient = createJiraClient(settings);
+
+          // Update labels based on status
+          if (status === 'READY') {
+            await jiraClient.updateLabels(issue.key, ['DOR_READY'], ['DOR_NEEDS_INFO']);
+          } else {
+            await jiraClient.updateLabels(issue.key, ['DOR_NEEDS_INFO'], ['DOR_READY']);
+          }
+
+          // Add DoR summary comment
+          const comment = buildDorComment(issue.key, score, status, missing);
+          await jiraClient.addComment(issue.key, comment);
+        } catch (writebackError) {
+          console.error(`JIRA writeback failed for ${issue.key}:`, writebackError);
+          // Non-fatal: continue processing other issues
+        }
+      }
     }
 
     return NextResponse.json({ message: `Scan completed — ${scannedIssues.length} issues processed`, issues: scannedIssues });
@@ -196,7 +272,7 @@ export async function POST(request: Request) {
 
 /** Score an issue against rules, returning score and structured missing items */
 function scoreIssue(
-  issue: any,
+  issue: NormalizedIssue,
   rules: any[],
   answeredQuestions: string[]
 ): { score: number; missing: { rule: string; severity: string; suggestion: string }[] } {

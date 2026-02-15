@@ -68,9 +68,9 @@ function statusBadge(status: string) {
   return m[status] || 'bg-gray-100 text-gray-800';
 }
 
-function scoreColor(s: number) {
-  if (s >= 4) return 'text-green-600 bg-green-50';
-  if (s >= 2.5) return 'text-yellow-600 bg-yellow-50';
+function scoreColor(s: number, readyThreshold = 4, clarificationThreshold = 2.5) {
+  if (s >= readyThreshold) return 'text-green-600 bg-green-50';
+  if (s >= clarificationThreshold) return 'text-yellow-600 bg-yellow-50';
   return 'text-red-600 bg-red-50';
 }
 
@@ -99,11 +99,15 @@ function IssueDrawer({
   onClose,
   onToast,
   onRefresh,
+  thresholdReady = 4,
+  thresholdClarification = 2.5,
 }: {
   issue: ScannedIssue;
   onClose: () => void;
   onToast: (msg: string) => void;
   onRefresh: () => void;
+  thresholdReady?: number;
+  thresholdClarification?: number;
 }) {
   const [questions, setQuestions] = useState<QaAnswer[]>(issue.answers || []);
   const [generating, setGenerating] = useState(false);
@@ -259,7 +263,7 @@ function IssueDrawer({
           {/* Score + Meta */}
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-gray-50 rounded-lg p-3 text-center">
-              <div className={`text-2xl font-bold ${scoreColor(issue.readinessScore)} px-2 py-1 rounded`}>
+              <div className={`text-2xl font-bold ${scoreColor(issue.readinessScore, thresholdReady, thresholdClarification)} px-2 py-1 rounded`}>
                 {issue.readinessScore.toFixed(1)}
               </div>
               <div className="text-xs text-gray-500 mt-1">Score / 5.0</div>
@@ -503,6 +507,21 @@ export default function Home() {
   const [sortBy, setSortBy] = useState<SortKey>('score');
   const [sortAsc, setSortAsc] = useState(false);
   const [selectedIssue, setSelectedIssue] = useState<ScannedIssue | null>(null);
+  const [thresholdReady, setThresholdReady] = useState(4);
+  const [thresholdClarification, setThresholdClarification] = useState(2.5);
+
+  const fetchThresholds = useCallback(async () => {
+    try {
+      const res = await fetch('/api/rules');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.thresholdReady !== undefined) setThresholdReady(data.thresholdReady);
+        if (data.thresholdClarification !== undefined) setThresholdClarification(data.thresholdClarification);
+      }
+    } catch {
+      // Keep defaults
+    }
+  }, []);
 
   const fetchIssues = useCallback(async () => {
     try {
@@ -513,7 +532,7 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => { fetchIssues(); }, [fetchIssues]);
+  useEffect(() => { fetchIssues(); fetchThresholds(); }, [fetchIssues, fetchThresholds]);
 
   const loadDemoData = async () => {
     setLoading(true);
@@ -522,6 +541,7 @@ export default function Home() {
       const data = await res.json();
       setToast(data.message || 'Demo data loaded!');
       fetchIssues();
+      fetchThresholds();
     } catch { setToast('Error loading demo data'); }
     finally { setLoading(false); }
   };
@@ -532,11 +552,15 @@ export default function Home() {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectKey: 'DEMO' }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
-      setToast(data.message || 'Scan completed!');
-      fetchIssues();
+      if (!res.ok) {
+        setToast(`Scan failed: ${data.error || 'Unknown error'}`);
+      } else {
+        setToast(data.message || 'Scan completed!');
+        fetchIssues();
+      }
     } catch (err) {
       setToast('Error scanning issues');
     }
@@ -744,7 +768,7 @@ export default function Home() {
                         {issue.assignee || <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${scoreColor(issue.readinessScore)}`}>
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${scoreColor(issue.readinessScore, thresholdReady, thresholdClarification)}`}>
                           {issue.readinessScore.toFixed(1)}
                         </span>
                       </td>
@@ -801,6 +825,8 @@ export default function Home() {
           issue={selectedIssue}
           onClose={() => setSelectedIssue(null)}
           onToast={setToast}
+          thresholdReady={thresholdReady}
+          thresholdClarification={thresholdClarification}
           onRefresh={() => {
             fetchIssues();
             // Refresh selected issue too

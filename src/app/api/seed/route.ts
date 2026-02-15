@@ -5,49 +5,43 @@ import { encrypt } from '@/lib/crypto';
 
 export async function POST() {
   try {
-    // Upsert settings (idempotent)
-    await prisma.settings.upsert({
+    // Only create default settings if none exist — never overwrite real credentials
+    const existingSettings = await prisma.settings.findUnique({
       where: { id: 'singleton' },
-      update: {
-        mockMode: true,
-        jiraBaseUrl: 'https://example.atlassian.net',
-        jiraEmail: 'demo@example.com',
-        jiraApiToken: encrypt('demo-token'),
-        jiraProjectKeys: 'DEMO',
-        jiraJql: 'project = DEMO AND type = Story',
-        slackBotToken: encrypt('xoxb-demo'),
-        slackSigningSecret: encrypt('demo-secret'),
-        llmProvider: 'openai',
-        llmApiKey: encrypt('demo-key'),
-        llmModel: 'gpt-4o-mini',
-      },
-      create: {
-        id: 'singleton',
-        mockMode: true,
-        jiraBaseUrl: 'https://example.atlassian.net',
-        jiraEmail: 'demo@example.com',
-        jiraApiToken: encrypt('demo-token'),
-        jiraProjectKeys: 'DEMO',
-        jiraJql: 'project = DEMO AND type = Story',
-        slackBotToken: encrypt('xoxb-demo'),
-        slackSigningSecret: encrypt('demo-secret'),
-        llmProvider: 'openai',
-        llmApiKey: encrypt('demo-key'),
-        llmModel: 'gpt-4o-mini',
-      },
     });
+
+    if (!existingSettings) {
+      await prisma.settings.create({
+        data: {
+          id: 'singleton',
+          mockMode: true,
+          jiraBaseUrl: 'https://example.atlassian.net',
+          jiraEmail: 'demo@example.com',
+          jiraApiToken: encrypt('demo-token'),
+          jiraProjectKeys: 'DEMO',
+          jiraJql: 'project = DEMO AND type = Story',
+          slackBotToken: encrypt('xoxb-demo'),
+          slackSigningSecret: encrypt('demo-secret'),
+          llmProvider: 'openai',
+          llmApiKey: encrypt('demo-key'),
+          llmModel: 'gpt-4o-mini',
+        },
+      });
+    }
 
     // Delete existing DEMO rulesets and their rules (cascade) for idempotency
     await prisma.dorRuleset.deleteMany({
       where: { projectKey: 'DEMO' },
     });
 
-    // Create fresh default ruleset
+    // Create fresh default ruleset with configurable thresholds
     const ruleset = await prisma.dorRuleset.create({
       data: {
         projectKey: 'DEMO',
         version: 1,
         isActive: true,
+        thresholdReady: 4.0,
+        thresholdClarification: 2.5,
       },
     });
 
