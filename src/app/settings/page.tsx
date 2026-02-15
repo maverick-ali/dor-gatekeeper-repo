@@ -29,14 +29,37 @@ export default function SettingsPage() {
     fetchSettings();
   }, []);
 
+  const defaultSettings: Settings = {
+    id: '',
+    mockMode: true,
+    jiraBaseUrl: '',
+    jiraEmail: '',
+    jiraApiToken: '',
+    jiraProjectKeys: '',
+    jiraJql: '',
+    slackBotToken: '',
+    slackSigningSecret: '',
+    slackAppToken: '',
+    slackDefaultChannel: '',
+    llmProvider: 'openai',
+    llmApiKey: '',
+    llmModel: 'gpt-4o-mini',
+  };
+
   const fetchSettings = async () => {
     try {
       const response = await fetch('/api/settings');
       const data = await response.json();
-      setSettings(data);
+      if (response.ok) {
+        setSettings(data);
+      } else {
+        // No settings in DB yet — use defaults so the form is usable
+        setSettings(defaultSettings);
+      }
     } catch (error) {
       console.error('Error fetching settings:', error);
-      setMessage('Error loading settings');
+      setSettings(defaultSettings);
+      setMessage('Error loading settings — using defaults');
     } finally {
       setLoading(false);
     }
@@ -63,11 +86,41 @@ export default function SettingsPage() {
     }
   };
 
+  const modelsByProvider: Record<string, { value: string; label: string }[]> = {
+    openai: [
+      { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+      { value: 'gpt-4o', label: 'GPT-4o' },
+      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+      { value: 'o1-mini', label: 'o1 Mini' },
+      { value: 'o1-preview', label: 'o1 Preview' },
+    ],
+    anthropic: [
+      { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' },
+      { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet' },
+      { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+      { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+    ],
+    google: [
+      { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
+      { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+      { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+    ],
+  };
+
   const handleChange = (field: keyof Settings, value: any) => {
     if (settings) {
-      setSettings({ ...settings, [field]: value });
+      if (field === 'llmProvider') {
+        // Auto-select first model for the new provider
+        const models = modelsByProvider[value] || [];
+        setSettings({ ...settings, llmProvider: value, llmModel: models[0]?.value || '' });
+      } else {
+        setSettings({ ...settings, [field]: value });
+      }
     }
   };
+
+  const isMock = settings?.mockMode ?? true;
 
   if (loading) {
     return <div className="py-10 text-center">Loading...</div>;
@@ -110,11 +163,15 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              <fieldset disabled={isMock} className={`space-y-6 ${isMock ? 'opacity-50' : ''}`}>
               <div className="bg-white shadow sm:rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
-                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
                     Jira Configuration
                   </h3>
+                  {isMock && (
+                    <p className="text-xs text-amber-600 mb-4">Disabled in Mock Mode</p>
+                  )}
                   <div className="grid grid-cols-1 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Base URL</label>
@@ -122,7 +179,7 @@ export default function SettingsPage() {
                         type="text"
                         value={settings.jiraBaseUrl}
                         onChange={(e) => handleChange('jiraBaseUrl', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="https://example.atlassian.net"
                       />
                     </div>
@@ -132,7 +189,7 @@ export default function SettingsPage() {
                         type="email"
                         value={settings.jiraEmail}
                         onChange={(e) => handleChange('jiraEmail', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
@@ -141,7 +198,7 @@ export default function SettingsPage() {
                         type="password"
                         value={settings.jiraApiToken}
                         onChange={(e) => handleChange('jiraApiToken', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
@@ -150,7 +207,7 @@ export default function SettingsPage() {
                         type="text"
                         value={settings.jiraProjectKeys}
                         onChange={(e) => handleChange('jiraProjectKeys', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="DEMO, PROD"
                       />
                     </div>
@@ -160,7 +217,7 @@ export default function SettingsPage() {
                         value={settings.jiraJql}
                         onChange={(e) => handleChange('jiraJql', e.target.value)}
                         rows={3}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="project = DEMO AND type = Story"
                       />
                     </div>
@@ -170,17 +227,21 @@ export default function SettingsPage() {
 
               <div className="bg-white shadow sm:rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
-                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
                     Slack Configuration
                   </h3>
+                  {isMock && (
+                    <p className="text-xs text-amber-600 mb-4">Disabled in Mock Mode</p>
+                  )}
                   <div className="grid grid-cols-1 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Bot Token</label>
                       <input
                         type="password"
+                        disabled={isMock}
                         value={settings.slackBotToken}
                         onChange={(e) => handleChange('slackBotToken', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="xoxb-..."
                       />
                     </div>
@@ -188,18 +249,20 @@ export default function SettingsPage() {
                       <label className="block text-sm font-medium text-gray-700">Signing Secret</label>
                       <input
                         type="password"
+                        disabled={isMock}
                         value={settings.slackSigningSecret}
                         onChange={(e) => handleChange('slackSigningSecret', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">App Token (for Socket Mode)</label>
                       <input
                         type="password"
+                        disabled={isMock}
                         value={settings.slackAppToken}
                         onChange={(e) => handleChange('slackAppToken', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="xapp-..."
                       />
                     </div>
@@ -207,9 +270,10 @@ export default function SettingsPage() {
                       <label className="block text-sm font-medium text-gray-700">Default Channel</label>
                       <input
                         type="text"
+                        disabled={isMock}
                         value={settings.slackDefaultChannel}
                         onChange={(e) => handleChange('slackDefaultChannel', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                         placeholder="#general"
                       />
                     </div>
@@ -219,16 +283,20 @@ export default function SettingsPage() {
 
               <div className="bg-white shadow sm:rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
-                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-1">
                     LLM Configuration
                   </h3>
+                  {isMock && (
+                    <p className="text-xs text-amber-600 mb-4">Disabled in Mock Mode</p>
+                  )}
                   <div className="grid grid-cols-1 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Provider</label>
                       <select
+                        disabled={isMock}
                         value={settings.llmProvider}
                         onChange={(e) => handleChange('llmProvider', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                       >
                         <option value="openai">OpenAI</option>
                         <option value="anthropic">Anthropic</option>
@@ -239,24 +307,29 @@ export default function SettingsPage() {
                       <label className="block text-sm font-medium text-gray-700">API Key</label>
                       <input
                         type="password"
+                        disabled={isMock}
                         value={settings.llmApiKey}
                         onChange={(e) => handleChange('llmApiKey', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Model</label>
-                      <input
-                        type="text"
+                      <select
+                        disabled={isMock}
                         value={settings.llmModel}
                         onChange={(e) => handleChange('llmModel', e.target.value)}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                        placeholder="gpt-4o-mini"
-                      />
+                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      >
+                        {(modelsByProvider[settings.llmProvider] || []).map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>
               </div>
+              </fieldset>
 
               <div className="flex justify-end">
                 <button

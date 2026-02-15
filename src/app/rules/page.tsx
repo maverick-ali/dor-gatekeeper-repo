@@ -37,7 +37,10 @@ export default function RulesPage() {
     try {
       const response = await fetch('/api/rules');
       const data = await response.json();
-      setRuleset(data);
+      if (response.ok) {
+        setRuleset(data);
+      }
+      // else: ruleset stays null, showing "No ruleset found" message
     } catch (error) {
       console.error('Error fetching rules:', error);
       setMessage('Error loading rules');

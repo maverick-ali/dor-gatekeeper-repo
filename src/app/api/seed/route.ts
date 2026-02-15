@@ -5,7 +5,7 @@ import { encrypt } from '@/lib/crypto';
 
 export async function POST() {
   try {
-    // Create settings with mock mode enabled
+    // Upsert settings (idempotent)
     await prisma.settings.upsert({
       where: { id: 'singleton' },
       update: {
@@ -19,7 +19,7 @@ export async function POST() {
         slackSigningSecret: encrypt('demo-secret'),
         llmProvider: 'openai',
         llmApiKey: encrypt('demo-key'),
-        llmModel: 'gpt-4',
+        llmModel: 'gpt-4o-mini',
       },
       create: {
         id: 'singleton',
@@ -33,11 +33,16 @@ export async function POST() {
         slackSigningSecret: encrypt('demo-secret'),
         llmProvider: 'openai',
         llmApiKey: encrypt('demo-key'),
-        llmModel: 'gpt-4',
+        llmModel: 'gpt-4o-mini',
       },
     });
 
-    // Create default ruleset
+    // Delete existing DEMO rulesets and their rules (cascade) for idempotency
+    await prisma.dorRuleset.deleteMany({
+      where: { projectKey: 'DEMO' },
+    });
+
+    // Create fresh default ruleset
     const ruleset = await prisma.dorRuleset.create({
       data: {
         projectKey: 'DEMO',
@@ -56,13 +61,24 @@ export async function POST() {
       });
     }
 
-    // Create user mappings
-    await prisma.userMapping.createMany({
-      data: [
-        { jiraEmail: 'alice@example.com', slackUserId: 'U001', slackDisplayName: 'alice' },
-        { jiraEmail: 'bob@example.com', slackUserId: 'U002', slackDisplayName: 'bob' },
-      ],
-    });
+    // Delete existing scanned issues for clean slate
+    await prisma.qaAnswer.deleteMany({});
+    await prisma.scannedIssue.deleteMany({});
+
+    // Upsert user mappings (idempotent)
+    const mappings = [
+      { jiraEmail: 'alice@example.com', slackUserId: 'U001', slackDisplayName: 'Alice Chen' },
+      { jiraEmail: 'bob@example.com', slackUserId: 'U002', slackDisplayName: 'Bob Martinez' },
+      { jiraEmail: 'carol@example.com', slackUserId: 'U003', slackDisplayName: 'Carol Wu' },
+    ];
+
+    for (const mapping of mappings) {
+      await prisma.userMapping.upsert({
+        where: { jiraEmail: mapping.jiraEmail },
+        update: { slackUserId: mapping.slackUserId, slackDisplayName: mapping.slackDisplayName },
+        create: mapping,
+      });
+    }
 
     return NextResponse.json({ message: 'Demo data loaded successfully' });
   } catch (error) {

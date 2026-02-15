@@ -7,7 +7,7 @@ export const DEFAULT_RULES = [
     weight: 1.0,
     detectionMethod: 'field_presence',
     targetField: 'description',
-    expectedPattern: '(?i)(acceptance criteria|AC:)',
+    expectedPattern: '(acceptance criteria|AC:)',
     minLength: 20,
   },
   {
@@ -40,7 +40,7 @@ export const DEFAULT_RULES = [
     weight: 0.9,
     detectionMethod: 'field_presence',
     targetField: 'description',
-    expectedPattern: '(?i)(technical design|design notes|architecture)',
+    expectedPattern: '(technical design|design notes|architecture)',
     minLength: 50,
   },
   {
@@ -51,7 +51,7 @@ export const DEFAULT_RULES = [
     weight: 0.7,
     detectionMethod: 'field_presence',
     targetField: 'description',
-    expectedPattern: '(?i)(depends on|dependency|blocked by)',
+    expectedPattern: '(depends on|dependency|blocked by)',
     minLength: null,
   },
   {
@@ -62,7 +62,7 @@ export const DEFAULT_RULES = [
     weight: 0.8,
     detectionMethod: 'field_presence',
     targetField: 'description',
-    expectedPattern: '(?i)(test strategy|testing approach|QA notes)',
+    expectedPattern: '(test strategy|testing approach|QA notes)',
     minLength: 30,
   },
   {
@@ -73,7 +73,7 @@ export const DEFAULT_RULES = [
     weight: 0.6,
     detectionMethod: 'field_presence',
     targetField: 'description',
-    expectedPattern: '(?i)(user impact|affects users|customer impact)',
+    expectedPattern: '(user impact|affects users|customer impact)',
     minLength: null,
   },
   {
@@ -114,7 +114,9 @@ export function calculateReadinessScore(issue: any, rules: typeof DEFAULT_RULES)
 
     if (rule.detectionMethod === 'field_presence') {
       if (rule.expectedPattern) {
-        const regex = new RegExp(rule.expectedPattern, 'i');
+        // Strip Python-style (?i) inline flag; the 'i' flag is already passed to RegExp
+        const cleanPattern = rule.expectedPattern.replace(/\(\?i\)/g, '');
+        const regex = new RegExp(cleanPattern, 'i');
         passes = regex.test(String(fieldValue));
       } else {
         passes = fieldValue !== '' && fieldValue !== null && fieldValue !== undefined;
