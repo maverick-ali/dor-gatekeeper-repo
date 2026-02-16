@@ -59,13 +59,23 @@ A Next.js application that enforces Definition of Ready (DoR) standards for Jira
 
 4. **Initialize the database**
    ```bash
-   node init-db.js
-   npx prisma generate
+   #node init-db.js
+   
+   #npx prisma generate
+
+   # 1. Generate Prisma Client (creates TypeScript types)
+   npm run db:generate
+   
+   # 2. Push your schema to the database (creates tables)
+   npm run db:push
    ```
 
 5. **Run the development server**
    ```bash
    npm run dev
+
+   # run the ngrok service (to communicate with slack <-> DoR app)
+   ngrok http 3000
    ```
 
 6. **Open the application**
